@@ -1,0 +1,56 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 11:00 Asia/Shanghai daily
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name  "GitHub Actions (sync-upstream)"
+
+      - name: Add upstream + fetch
+        run: |
+          if ! git remote get-url upstream >/dev/null 2>&1; then
+            git remote add upstream https://github.com/Aethersailor/Custom_OpenClash_Rules.git
+          fi
+          git fetch upstream main --tags
+
+      - name: Merge upstream/main (fast-forward when possible)
+        id: merge
+        run: |
+          set -e
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/main)
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "already-up-to-date" >> "$GITHUB_STEP_SUMMARY"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git merge --ff-only upstream/main 2>/dev/null; then
+            echo "fast-forward to $UPSTREAM" >> "$GITHUB_STEP_SUMMARY"
+          else
+            git merge upstream/main --no-edit -m "chore: merge upstream/main (auto-sync)"
+            echo "merge-commit to $UPSTREAM" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin main
